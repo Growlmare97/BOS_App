@@ -15,15 +15,30 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Literal, Optional, Tuple
+from typing import Iterator, Literal, Optional, Tuple
 
 import numpy as np
-from scipy.signal import fftconvolve
 
 logger = logging.getLogger(__name__)
 
 Method = Literal["cross_correlation", "lucas_kanade", "farneback"]
 SubpixelFit = Literal["parabolic", "gaussian"]
+
+
+@dataclass
+class DisplacementResult:
+    """Return type for cross-correlation — supports tuple unpacking (dx, dy)
+    and also carries the grid coordinate arrays for up-sampling.
+    """
+    dx: np.ndarray
+    dy: np.ndarray
+    grid_x: Optional[np.ndarray] = None   # col centres (n_rows × n_cols)
+    grid_y: Optional[np.ndarray] = None   # row centres (n_rows × n_cols)
+
+    def __iter__(self) -> Iterator[np.ndarray]:
+        """Allow:  dx, dy = compute_displacement(...)"""
+        yield self.dx
+        yield self.dy
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -80,7 +95,7 @@ def compute_displacement(
     reference: np.ndarray,
     measurement: np.ndarray,
     config: Optional[DisplacementConfig] = None,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> DisplacementResult:
     """Compute the displacement field between *reference* and *measurement*.
 
     Parameters
@@ -120,9 +135,11 @@ def compute_displacement(
     if cfg.method == "cross_correlation":
         return _cross_correlation(reference, measurement, cfg)
     elif cfg.method == "lucas_kanade":
-        return _lucas_kanade(reference, measurement, cfg)
+        dx, dy = _lucas_kanade(reference, measurement, cfg)
+        return DisplacementResult(dx=dx, dy=dy)
     elif cfg.method == "farneback":
-        return _farneback(reference, measurement, cfg)
+        dx, dy = _farneback(reference, measurement, cfg)
+        return DisplacementResult(dx=dx, dy=dy)
     else:
         raise ValueError(f"Unknown displacement method: '{cfg.method}'")
 
@@ -131,8 +148,9 @@ def interpolate_to_full_resolution(
     dx_grid: np.ndarray,
     dy_grid: np.ndarray,
     target_shape: Tuple[int, int],
-    grid_x: np.ndarray,
-    grid_y: np.ndarray,
+    grid_x: Optional[np.ndarray] = None,
+    grid_y: Optional[np.ndarray] = None,
+    result: Optional[DisplacementResult] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Bilinear up-sample cross-correlation displacement grids to full resolution.
 
@@ -147,6 +165,14 @@ def interpolate_to_full_resolution(
         ``_build_grid``).
     """
     from scipy.interpolate import RegularGridInterpolator
+
+    # Allow passing a DisplacementResult directly
+    if result is not None:
+        grid_x = result.grid_x
+        grid_y = result.grid_y
+
+    if grid_x is None or grid_y is None:
+        raise ValueError("grid_x and grid_y must be provided (or pass result=DisplacementResult).")
 
     H, W = target_shape
     yi = np.arange(H, dtype=np.float32)
@@ -216,7 +242,8 @@ def _cross_correlation(
             pm = _normalise_patch(patch_meas) * win_func
 
             # FFT cross-correlation (normalised)
-            corr = _fft_xcorr(pr, pm)
+            # correlating (meas, ref) gives peak at (+dx, +dy) = displacement
+            corr = _fft_xcorr(pm, pr)
 
             # Find peak
             peak_y, peak_x = np.unravel_index(np.argmax(corr), corr.shape)
@@ -232,18 +259,12 @@ def _cross_correlation(
     # Build full-resolution coordinate meshes (for optional up-sampling)
     gx_arr, gy_arr = np.meshgrid(grid_cols, grid_rows)
 
-    # Attach grid arrays as attributes for consumers
-    dx_grid._grid_x = gx_arr   # type: ignore[attr-defined]
-    dx_grid._grid_y = gy_arr   # type: ignore[attr-defined]
-    dy_grid._grid_x = gx_arr   # type: ignore[attr-defined]
-    dy_grid._grid_y = gy_arr   # type: ignore[attr-defined]
-
     logger.debug(
         "Cross-correlation complete: grid shape (%d × %d), "
         "max |dx|=%.2f px, max |dy|=%.2f px.",
         n_rows, n_cols, np.abs(dx_grid).max(), np.abs(dy_grid).max(),
     )
-    return dx_grid, dy_grid
+    return DisplacementResult(dx=dx_grid, dy=dy_grid, grid_x=gx_arr, grid_y=gy_arr)
 
 
 def _build_grid(H: int, W: int, ws: int, step: int):

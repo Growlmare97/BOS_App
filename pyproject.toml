@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "bos_pipeline"
@@ -33,13 +33,26 @@ dependencies = [
     "h5py>=3.9",
     "pyyaml>=6.0",
     "PyAbel>=0.9",
-    "pyMRAW>=1.1",
-    "harvesters>=1.4",
-    "genicam>=1.1",
 ]
 
 [project.optional-dependencies]
+photron = [
+    "pyMRAW>=0.30",          # Photron .mraw reader
+]
+live = [
+    "harvesters>=1.4",       # GenICam/GigE Vision live acquisition
+    "genicam>=1.1",
+]
 dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "jupyter>=1.0",
+    "ipykernel>=6.25",
+]
+all = [
+    "pyMRAW>=0.30",
+    "harvesters>=1.4",
+    "genicam>=1.1",
     "pytest>=7.4",
     "pytest-cov>=4.1",
     "jupyter>=1.0",

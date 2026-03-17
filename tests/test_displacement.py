@@ -156,12 +156,10 @@ class TestCrossCorrelation:
     def test_interpolation_to_full_resolution(self, synthetic_cartesian):
         ref, meas, *_ = synthetic_cartesian
         cfg = DisplacementConfig(method="cross_correlation", window_size=64)
-        dx_grid, dy_grid = compute_displacement(ref, meas, config=cfg)
+        result = compute_displacement(ref, meas, config=cfg)
 
-        gx = dx_grid._grid_x  # type: ignore[attr-defined]
-        gy = dx_grid._grid_y  # type: ignore[attr-defined]
         dx_full, dy_full = interpolate_to_full_resolution(
-            dx_grid, dy_grid, ref.shape, gx, gy
+            result.dx, result.dy, ref.shape, result=result
         )
         assert dx_full.shape == ref.shape
         assert dy_full.shape == ref.shape
@@ -216,8 +214,8 @@ class TestDisplacementMagnitude:
     def test_magnitude_nonneg(self, synthetic_cartesian):
         ref, meas, *_ = synthetic_cartesian
         cfg = DisplacementConfig(method="cross_correlation", window_size=64)
-        dx, dy = compute_displacement(ref, meas, config=cfg)
-        mag = displacement_magnitude(dx, dy)
+        result = compute_displacement(ref, meas, config=cfg)
+        mag = displacement_magnitude(result.dx, result.dy)
         assert (mag >= 0).all()
 
     def test_magnitude_zeros(self):

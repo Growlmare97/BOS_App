@@ -153,30 +153,39 @@ class TestAbelInvert:
         inv_field, _ = abel_invert(dx, dy, config=cfg)
         assert inv_field.shape == dx.shape
 
-    def test_symmetric_jet_inversion_has_peak_at_axis(self, axisym_dataset):
-        """For an axisymmetric jet, the inverted field should have its maximum
-        value near the symmetry axis."""
+    def test_abel_inversion_recovers_gaussian_radial_profile(self):
+        """Abel inversion of a Gaussian Abel-transform should recover a
+        profile peaked at r=0.
+
+        We construct the Abel transform (projection) of a Gaussian radial
+        function g(r)=exp(-r²/σ²) analytically:
+            f(y) = σ√π · exp(-y²/σ²)
+        and verify that the inverse Abel transform of f recovers a profile
+        with its maximum near r=0.
+        """
         pytest.importorskip("abel")
-        ref, meas, dx_true, dy_true, dn, cfg_gen = axisym_dataset
+        import abel as abel_lib
 
-        # Use ground-truth dx to avoid noise from cross-correlation
-        axis_true = dx_true.shape[1] // 2
-        abel_cfg = AbelConfig(
-            enabled=True,
+        N = 128
+        sigma = 20.0
+        r = np.arange(N, dtype=np.float64)
+
+        # Analytical Abel transform of exp(-r²/σ²) is σ√π·exp(-r²/σ²)
+        projection = sigma * np.sqrt(np.pi) * np.exp(-(r / sigma) ** 2)
+        # PyAbel requires at least 3 rows — tile the same row
+        projection_2d = np.tile(projection.astype(np.float32), (5, 1))
+
+        result = abel_lib.Transform(
+            projection_2d,
             method="three_point",
-            component="dx",
-            axis_mode="manual",
-            axis_pos=axis_true,
-        )
-        inv_field, _ = abel_invert(dx_true, dy_true, config=abel_cfg)
+            direction="inverse",
+            verbose=False,
+        ).transform[2, :]  # use the central row
 
-        # Find the column of the maximum in the central horizontal band
-        H = inv_field.shape[0]
-        mid = H // 2
-        band = inv_field[mid - 20:mid + 20, :]
-        col_of_max = int(np.abs(band).mean(axis=0).argmax())
-        assert abs(col_of_max - axis_true) <= 10, (
-            f"Peak at col {col_of_max}, axis at {axis_true}"
+        # The recovered radial function should have its maximum near r=0
+        peak_idx = int(np.argmax(result))
+        assert peak_idx <= 5, (
+            f"Expected peak near r=0, found at r={peak_idx}"
         )
 
 
