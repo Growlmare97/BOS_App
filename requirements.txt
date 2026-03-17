@@ -1,0 +1,29 @@
+# Core scientific stack
+numpy>=1.24
+scipy>=1.11
+scikit-image>=0.21
+opencv-python>=4.8
+matplotlib>=3.7
+
+# Camera I/O
+tifffile>=2023.1        # TIFF reading/writing (Teledyne DALSA sequences)
+pyMRAW>=1.1             # Photron .mraw + .cihx/.cih support
+
+# BOS-specific processing
+PyAbel>=0.9             # Abel inversion (three-point, BASEX, Hansen-Law)
+
+# Live acquisition (optional, GenICam/GigE Vision fallback)
+harvesters>=1.4
+genicam>=1.1
+
+# Data export
+h5py>=3.9               # HDF5 export
+
+# Configuration
+pyyaml>=6.0
+
+# Development / testing
+pytest>=7.4
+pytest-cov>=4.1
+jupyter>=1.0
+ipykernel>=6.25

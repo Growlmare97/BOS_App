@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "bos_pipeline"
+version = "0.1.0"
+description = "Background-Oriented Schlieren image processing pipeline for Photron and Teledyne DALSA cameras"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "CoStudy GmbH" },
+]
+keywords = ["BOS", "schlieren", "optical flow", "image processing", "fluid dynamics"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.11",
+    "scikit-image>=0.21",
+    "opencv-python>=4.8",
+    "matplotlib>=3.7",
+    "tifffile>=2023.1",
+    "h5py>=3.9",
+    "pyyaml>=6.0",
+    "PyAbel>=0.9",
+    "pyMRAW>=1.1",
+    "harvesters>=1.4",
+    "genicam>=1.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "jupyter>=1.0",
+    "ipykernel>=6.25",
+]
+
+[project.scripts]
+bos_process = "bos_pipeline.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["bos_pipeline*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

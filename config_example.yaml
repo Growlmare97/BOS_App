@@ -1,0 +1,99 @@
+# BOS Pipeline — Example Configuration File
+# Copy this file and adjust paths/parameters for your experiment.
+
+# ---------------------------------------------------------------------------
+# Camera / Input
+# ---------------------------------------------------------------------------
+camera:
+  type: photron            # photron | dalsa | tiff_sequence
+  input_path: ./data/shot_001.mraw          # .mraw file (photron)
+  # input_path: ./data/frames/              # folder of TIFFs (dalsa / tiff_sequence)
+  metadata_file: ./data/shot_001.cihx       # .cihx or .cih (photron only)
+  reference_frame: 0                        # index or path to reference frame
+  measurement_frames: [10, 20, 30]          # list of frame indices, or "all"
+
+# Teledyne DALSA / TIFF sequence options
+tiff:
+  pattern: "frame_{:05d}.tiff"   # filename pattern for numbered sequences
+  start_index: 0
+  multipage: false               # set true for multi-page TIFF stacks
+
+# Live acquisition (dalsa GigE Vision via Harvesters)
+live:
+  enabled: false
+  cti_file: /opt/genicam/gentl/producers/DALSA.cti   # GenTL producer path
+  exposure_us: 1000
+  gain: 1.0
+
+# ---------------------------------------------------------------------------
+# Preprocessing
+# ---------------------------------------------------------------------------
+preprocessing:
+  reference_avg_frames: 10        # average N frames for reference (1 = single frame)
+  measurement_avg_frames: 1       # average N frames for measurement
+  flat_field_path: null           # path to flat-field calibration image, or null
+  dark_frame_path: null           # path to dark frame for subtraction, or null
+  gaussian_sigma: 1.5             # pre-filter sigma in pixels (0 to disable)
+
+# ---------------------------------------------------------------------------
+# Displacement Field Computation
+# ---------------------------------------------------------------------------
+displacement:
+  method: cross_correlation       # cross_correlation | lucas_kanade | farneback
+  window_size: 64                 # interrogation window size in pixels
+  overlap: 0.5                    # window overlap fraction (0.0–0.9)
+  subpixel: parabolic             # subpixel peak fitting: parabolic | gaussian
+
+  # Optical flow options (used when method is lucas_kanade or farneback)
+  optical_flow:
+    lk_win_size: 15               # Lucas-Kanade window size
+    lk_max_level: 3               # pyramid levels
+    fb_pyr_scale: 0.5             # Farneback pyramid scale
+    fb_levels: 3
+    fb_winsize: 15
+    fb_iterations: 3
+    fb_poly_n: 5
+    fb_poly_sigma: 1.2
+
+# ---------------------------------------------------------------------------
+# Abel Inversion (optional, for axisymmetric flows)
+# ---------------------------------------------------------------------------
+abel:
+  enabled: false
+  method: three_point             # three_point | basex | hansenlaw
+  component: magnitude            # magnitude | dx | dy
+  axis_mode: auto                 # auto | manual
+  axis_pos: null                  # pixel column for manual axis (null = auto)
+  dr: 1.0                         # radial step size in pixels
+
+# ---------------------------------------------------------------------------
+# Physical Unit Conversion (optional)
+# ---------------------------------------------------------------------------
+calibration:
+  enabled: false
+  focal_length_mm: 50.0           # camera focal length [mm]
+  distance_to_background_m: 1.0   # distance from camera to background pattern [m]
+  pixel_size_um: 5.5              # sensor pixel size [µm]
+  gladstone_dale: 2.259e-4        # Gladstone-Dale constant [m³/kg] (H₂: 1.55e-4)
+  reference_density_kg_m3: 1.2    # reference (ambient) density [kg/m³]
+
+# ---------------------------------------------------------------------------
+# Visualization
+# ---------------------------------------------------------------------------
+visualization:
+  colormap_magnitude: viridis     # colormap for displacement magnitude
+  colormap_signed: seismic        # colormap for signed dx/dy
+  quiver_downsample: 8            # downsample factor for quiver arrows
+  dpi: 300                        # output DPI for saved figures
+  show_interactive: true          # open matplotlib interactive window
+  scale_bar: true                 # show scale bar on images (requires calibration)
+
+# ---------------------------------------------------------------------------
+# Export
+# ---------------------------------------------------------------------------
+export:
+  output_dir: ./output
+  displacement_format: hdf5       # npy | hdf5 | csv
+  save_figures: true
+  figure_format: [png, pdf]       # list of formats
+  save_log: true                  # write JSON processing log
