@@ -90,15 +90,19 @@ QGroupBox::title {
 }
 /* ── Inputs ── */
 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
+    color: #202020;
     border: 1px solid #d0d0d0;
     border-radius: 5px;
     padding: 4px 7px;
     background: #fafafa;
     selection-background-color: #0067c0;
+    selection-color: #ffffff;
 }
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
     border-color: #0067c0;
 }
+QLineEdit::placeholder { color: #aaaaaa; }
+QComboBox QAbstractItemView { color: #202020; background: #ffffff; }
 QComboBox::drop-down { border: none; }
 /* ── Buttons ── */
 QPushButton {
