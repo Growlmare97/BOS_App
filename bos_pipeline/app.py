@@ -54,7 +54,9 @@ from bos_pipeline.processing.displacement import (
 )
 from bos_pipeline.processing.concentration import (
     ConcentrationConfig,
-    compute_h2_concentration,
+    compute_concentration,
+    compute_n_pair,
+    GAS_DB, JET_GASES, AMBIENT_GASES,
 )
 from bos_pipeline import export as _export
 import bos_pipeline.visualization as viz
@@ -327,19 +329,24 @@ class PipelineWorker(QObject):
                             enabled=True,
                             mm_per_px=p["conc_mm_per_px"],
                             Z_f_mm=p["conc_Z_f_mm"],
-                            n_gas=p["conc_n_gas"],
-                            n_ambient=p["conc_n_ambient"],
+                            gas_type=p["conc_gas_type"],
+                            ambient_gas=p["conc_ambient_gas"],
+                            temperature_K=p["conc_temperature_K"],
+                            pressure_Pa=p["conc_pressure_Pa"],
+                            n_gas_custom=p["conc_n_gas_custom"],
+                            n_ambient_custom=p["conc_n_ambient_custom"],
                             component=p["conc_component"],
                             abel_method=p["conc_abel_method"],
                             axis_mode=p["conc_axis_mode"],
                             axis_pos=p.get("conc_axis_pos"),
                         )
-                        concentration, axis_col = compute_h2_concentration(
+                        concentration, axis_col, n_gas, n_amb = compute_concentration(
                             dx, dy, conc_cfg
                         )
                         self.log_msg.emit(
-                            f"    H₂ conc: max={concentration.max():.4f}  "
-                            f"axis_col={axis_col}",
+                            f"    Conc: gas={p['conc_gas_type']} "
+                            f"n_gas={n_gas:.6f}  n_amb={n_amb:.6f}  "
+                            f"max={concentration.max():.4f}  axis={axis_col}",
                             "ok",
                         )
                     except Exception as exc:
@@ -563,18 +570,96 @@ class BOSWindow(QMainWindow):
         return grp
 
     def _make_concentration_group(self) -> QGroupBox:
-        grp = QGroupBox("H₂ Concentration")
+        grp = QGroupBox("Gas Concentration")
         grp.setCheckable(True)
         grp.setChecked(False)
         grp.setToolTip(
-            "Enable Abel-inversion-based H₂ concentration measurement.\n"
-            "Requires axisymmetric jet and calibrated pixel size + Z distance."
+            "Enable Abel-inversion-based gas concentration measurement.\n"
+            "Requires axisymmetric jet and calibrated pixel size + Z distance.\n"
+            "Refractive indices are computed implicitly from Gladstone-Dale\n"
+            "theory at the specified temperature and pressure."
         )
         self._conc_group = grp
 
         fl = QFormLayout(grp)
-        fl.setSpacing(7)
+        fl.setSpacing(6)
 
+        # ── Gas and ambient selection ──────────────────────────────────
+        self._conc_gas_type = QComboBox()
+        for key in JET_GASES:
+            label = GAS_DB[key]["label"] if key != "custom" else "Custom"
+            self._conc_gas_type.addItem(label, key)
+        self._conc_gas_type.setToolTip("Jet gas species")
+        self._conc_gas_type.currentIndexChanged.connect(self._on_conc_gas_changed)
+        fl.addRow("Jet gas:", self._conc_gas_type)
+
+        self._conc_ambient_gas = QComboBox()
+        for key in AMBIENT_GASES:
+            label = GAS_DB[key]["label"] if key != "custom" else "Custom"
+            self._conc_ambient_gas.addItem(label, key)
+        self._conc_ambient_gas.setToolTip("Ambient (background) gas species")
+        self._conc_ambient_gas.currentIndexChanged.connect(self._on_conc_gas_changed)
+        fl.addRow("Ambient:", self._conc_ambient_gas)
+
+        # ── Ambient conditions ─────────────────────────────────────────
+        self._conc_temp = QDoubleSpinBox()
+        self._conc_temp.setRange(100.0, 3000.0)
+        self._conc_temp.setDecimals(1)
+        self._conc_temp.setSingleStep(1.0)
+        self._conc_temp.setValue(293.15)
+        self._conc_temp.setToolTip("Ambient temperature [K]  (20 °C = 293.15 K)")
+        self._conc_temp.valueChanged.connect(self._on_conc_gas_changed)
+        fl.addRow("T [K]:", self._conc_temp)
+
+        self._conc_pressure = QDoubleSpinBox()
+        self._conc_pressure.setRange(1000.0, 1_000_000.0)
+        self._conc_pressure.setDecimals(0)
+        self._conc_pressure.setSingleStep(100.0)
+        self._conc_pressure.setValue(101325.0)
+        self._conc_pressure.setToolTip("Ambient pressure [Pa]  (1 atm = 101 325 Pa)")
+        self._conc_pressure.valueChanged.connect(self._on_conc_gas_changed)
+        fl.addRow("P [Pa]:", self._conc_pressure)
+
+        # ── Computed / custom n display ────────────────────────────────
+        self._conc_n_gas_lbl = QLabel("n_gas = 1.000 123")
+        self._conc_n_gas_lbl.setStyleSheet("color: #555; font-size: 8pt;")
+        self._conc_n_gas_spin = QDoubleSpinBox()
+        self._conc_n_gas_spin.setRange(1.0, 2.0)
+        self._conc_n_gas_spin.setDecimals(6)
+        self._conc_n_gas_spin.setSingleStep(0.000001)
+        self._conc_n_gas_spin.setValue(1.000132)
+        self._conc_n_gas_spin.setVisible(False)
+        self._conc_n_gas_spin.setToolTip("Custom refractive index of pure jet gas")
+        self._n_gas_stack = QWidget()
+        _hl = QHBoxLayout(self._n_gas_stack)
+        _hl.setContentsMargins(0, 0, 0, 0)
+        _hl.addWidget(self._conc_n_gas_lbl)
+        _hl.addWidget(self._conc_n_gas_spin)
+        fl.addRow("n_gas:", self._n_gas_stack)
+
+        self._conc_n_amb_lbl = QLabel("n_amb = 1.000 273")
+        self._conc_n_amb_lbl.setStyleSheet("color: #555; font-size: 8pt;")
+        self._conc_n_amb_spin = QDoubleSpinBox()
+        self._conc_n_amb_spin.setRange(1.0, 2.0)
+        self._conc_n_amb_spin.setDecimals(6)
+        self._conc_n_amb_spin.setSingleStep(0.000001)
+        self._conc_n_amb_spin.setValue(1.000293)
+        self._conc_n_amb_spin.setVisible(False)
+        self._conc_n_amb_spin.setToolTip("Custom refractive index of ambient gas")
+        self._n_amb_stack = QWidget()
+        _hl2 = QHBoxLayout(self._n_amb_stack)
+        _hl2.setContentsMargins(0, 0, 0, 0)
+        _hl2.addWidget(self._conc_n_amb_lbl)
+        _hl2.addWidget(self._conc_n_amb_spin)
+        fl.addRow("n_ambient:", self._n_amb_stack)
+
+        # ── Separator line ─────────────────────────────────────────────
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("color: #e0e0e0;")
+        fl.addRow(sep)
+
+        # ── Spatial calibration ────────────────────────────────────────
         self._conc_mm_per_px = QDoubleSpinBox()
         self._conc_mm_per_px.setRange(0.001, 100.0)
         self._conc_mm_per_px.setDecimals(4)
@@ -591,34 +676,23 @@ class BOSWindow(QMainWindow):
         self._conc_Zf.setToolTip("Distance from object to background screen [mm]")
         fl.addRow("Z_f [mm]:", self._conc_Zf)
 
-        self._conc_n_gas = QDoubleSpinBox()
-        self._conc_n_gas.setRange(1.0, 2.0)
-        self._conc_n_gas.setDecimals(6)
-        self._conc_n_gas.setSingleStep(0.0001)
-        self._conc_n_gas.setValue(1.000132)
-        self._conc_n_gas.setToolTip("Refractive index of pure gas (H₂ at STP: 1.000132)")
-        fl.addRow("n_gas:", self._conc_n_gas)
-
-        self._conc_n_ambient = QDoubleSpinBox()
-        self._conc_n_ambient.setRange(1.0, 2.0)
-        self._conc_n_ambient.setDecimals(6)
-        self._conc_n_ambient.setSingleStep(0.0001)
-        self._conc_n_ambient.setValue(1.000293)
-        self._conc_n_ambient.setToolTip("Refractive index of ambient gas (air at STP: 1.000293)")
-        fl.addRow("n_ambient:", self._conc_n_ambient)
-
+        # ── Signal component ───────────────────────────────────────────
         self._conc_component = QComboBox()
         self._conc_component.addItems(["dx", "dy"])
         self._conc_component.setToolTip(
-            "Displacement component that carries the radial signal.\n"
-            "• Vertical jet (axis along Y): use dx (horizontal deflection)\n"
-            "• Horizontal jet (axis along X): use dy"
+            "Displacement component carrying the radial signal.\n"
+            "Vertical jet (axis ∥ Y) → dx  |  Horizontal jet (axis ∥ X) → dy"
         )
         fl.addRow("Component:", self._conc_component)
 
         self._conc_abel_method = QComboBox()
         self._conc_abel_method.addItems(["three_point", "hansenlaw", "basex"])
-        self._conc_abel_method.setToolTip("PyAbel inversion method")
+        self._conc_abel_method.setToolTip(
+            "PyAbel inversion method.\n"
+            "three_point: fast & robust\n"
+            "hansenlaw:   better for noisy data\n"
+            "basex:       basis-set expansion"
+        )
         fl.addRow("Abel method:", self._conc_abel_method)
 
         self._conc_axis_mode = QComboBox()
@@ -633,7 +707,41 @@ class BOSWindow(QMainWindow):
         self._conc_axis_pos.setToolTip("Manual symmetry axis column [px]")
         fl.addRow("Axis col [px]:", self._conc_axis_pos)
 
+        # Initial label update
+        self._on_conc_gas_changed()
         return grp
+
+    def _on_conc_gas_changed(self, *_) -> None:
+        """Recompute and display n_gas / n_ambient from Gladstone-Dale."""
+        gas_key = self._conc_gas_type.currentData()
+        amb_key = self._conc_ambient_gas.currentData()
+        T = self._conc_temp.value()
+        P = self._conc_pressure.value()
+
+        custom_gas = (gas_key == "custom")
+        custom_amb = (amb_key == "custom")
+
+        self._conc_n_gas_lbl.setVisible(not custom_gas)
+        self._conc_n_gas_spin.setVisible(custom_gas)
+        self._conc_n_amb_lbl.setVisible(not custom_amb)
+        self._conc_n_amb_spin.setVisible(custom_amb)
+
+        if not custom_gas:
+            n_gas, n_amb = compute_n_pair(
+                gas_key, amb_key if not custom_amb else "air",
+                T, P,
+                self._conc_n_gas_spin.value(),
+                self._conc_n_amb_spin.value(),
+            )
+            self._conc_n_gas_lbl.setText(f"n_gas = {n_gas:.6f}")
+        if not custom_amb:
+            _, n_amb = compute_n_pair(
+                gas_key if not custom_gas else "air",
+                amb_key, T, P,
+                self._conc_n_gas_spin.value(),
+                self._conc_n_amb_spin.value(),
+            )
+            self._conc_n_amb_lbl.setText(f"n_amb = {n_amb:.6f}")
 
     def _on_conc_axis_mode_changed(self, mode: str) -> None:
         self._conc_axis_pos.setEnabled(mode == "manual")
@@ -893,16 +1001,20 @@ class BOSWindow(QMainWindow):
             "overlap":     self._overlap_spin.value(),
             "sigma":       self._sigma_spin.value(),
             # Concentration
-            "conc_enabled":      conc_enabled,
-            "conc_mm_per_px":    self._conc_mm_per_px.value(),
-            "conc_Z_f_mm":       self._conc_Zf.value(),
-            "conc_n_gas":        self._conc_n_gas.value(),
-            "conc_n_ambient":    self._conc_n_ambient.value(),
-            "conc_component":    self._conc_component.currentText(),
-            "conc_abel_method":  self._conc_abel_method.currentText(),
-            "conc_axis_mode":    axis_mode,
-            "conc_axis_pos":     (self._conc_axis_pos.value()
-                                  if axis_mode == "manual" else None),
+            "conc_enabled":        conc_enabled,
+            "conc_gas_type":       self._conc_gas_type.currentData(),
+            "conc_ambient_gas":    self._conc_ambient_gas.currentData(),
+            "conc_temperature_K":  self._conc_temp.value(),
+            "conc_pressure_Pa":    self._conc_pressure.value(),
+            "conc_n_gas_custom":   self._conc_n_gas_spin.value(),
+            "conc_n_ambient_custom": self._conc_n_amb_spin.value(),
+            "conc_mm_per_px":      self._conc_mm_per_px.value(),
+            "conc_Z_f_mm":         self._conc_Zf.value(),
+            "conc_component":      self._conc_component.currentText(),
+            "conc_abel_method":    self._conc_abel_method.currentText(),
+            "conc_axis_mode":      axis_mode,
+            "conc_axis_pos":       (self._conc_axis_pos.value()
+                                    if axis_mode == "manual" else None),
         }
 
         self._results.clear()
