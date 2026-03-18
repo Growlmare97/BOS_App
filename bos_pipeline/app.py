@@ -60,6 +60,7 @@ from bos_pipeline.processing.concentration import (
 )
 from bos_pipeline import export as _export
 import bos_pipeline.visualization as viz
+from bos_pipeline.video_export import export_results_video
 
 
 # =============================================================================
@@ -368,6 +369,38 @@ class PipelineWorker(QObject):
 
 
 # =============================================================================
+# Video export worker
+# =============================================================================
+
+class VideoExportWorker(QObject):
+    """Renders all results to an MP4 in a background thread."""
+
+    progress = Signal(int, int)    # (current, total)
+    finished = Signal(str)         # output path
+    error    = Signal(str)
+
+    def __init__(self, results: list, output_path: str, fps: float) -> None:
+        super().__init__()
+        self._results = results
+        self._output_path = output_path
+        self._fps = fps
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            path = export_results_video(
+                self._results,
+                self._output_path,
+                fps=self._fps,
+                progress_cb=lambda i, n: self.progress.emit(i, n),
+            )
+            self.finished.emit(str(path))
+        except Exception:
+            import traceback
+            self.error.emit(traceback.format_exc())
+
+
+# =============================================================================
 # Embedded matplotlib canvas
 # =============================================================================
 
@@ -422,9 +455,12 @@ class BOSWindow(QMainWindow):
         self._results:   List[dict] = []
         self._result_idx: int = 0
 
-        # Worker / thread
+        # Worker / thread (pipeline)
         self._thread: Optional[QThread] = None
         self._worker: Optional[PipelineWorker] = None
+        # Worker / thread (video export)
+        self._vid_thread: Optional[QThread] = None
+        self._vid_worker: Optional[VideoExportWorker] = None
 
         # Debounce timer for slider preview
         self._preview_timer = QTimer(self)
@@ -766,14 +802,44 @@ class BOSWindow(QMainWindow):
         self._save_btn.setEnabled(False)
         self._save_btn.clicked.connect(self._save_results)
 
+        # Video export row: button + fps spinner
+        vid_row = QWidget()
+        vr_hl = QHBoxLayout(vid_row)
+        vr_hl.setContentsMargins(0, 0, 0, 0)
+        vr_hl.setSpacing(4)
+
+        self._video_btn = QPushButton("🎬  Export Video")
+        self._video_btn.setObjectName("save_btn")
+        self._video_btn.setEnabled(False)
+        self._video_btn.setToolTip(
+            "Render all processed frames into an MP4 animation.\n"
+            "Shows displacement magnitude (and concentration if enabled)."
+        )
+        self._video_btn.clicked.connect(self._export_video)
+
+        fps_lbl = QLabel("fps:")
+        fps_lbl.setFixedWidth(26)
+        self._video_fps = QDoubleSpinBox()
+        self._video_fps.setRange(1.0, 60.0)
+        self._video_fps.setDecimals(1)
+        self._video_fps.setSingleStep(1.0)
+        self._video_fps.setValue(10.0)
+        self._video_fps.setFixedWidth(58)
+        self._video_fps.setToolTip("Video playback frame rate")
+
+        vr_hl.addWidget(self._video_btn, stretch=1)
+        vr_hl.addWidget(fps_lbl)
+        vr_hl.addWidget(self._video_fps)
+
         self._progress = QProgressBar()
-        self._progress.setMaximum(0)      # indeterminate
+        self._progress.setMaximum(0)      # indeterminate by default
         self._progress.setTextVisible(False)
         self._progress.setVisible(False)
 
         vl.addWidget(self._run_btn)
         vl.addWidget(self._cancel_btn)
         vl.addWidget(self._save_btn)
+        vl.addWidget(vid_row)
         vl.addWidget(self._progress)
         return w
 
@@ -1023,6 +1089,7 @@ class BOSWindow(QMainWindow):
         self._run_btn.setEnabled(False)
         self._cancel_btn.setEnabled(True)
         self._save_btn.setEnabled(False)
+        self._video_btn.setEnabled(False)
         self._progress.setVisible(True)
 
         self._log("─" * 44)
@@ -1080,6 +1147,7 @@ class BOSWindow(QMainWindow):
         self._log(f"Pipeline complete.  {n} result(s) available.", "ok")
         if n:
             self._save_btn.setEnabled(True)
+            self._video_btn.setEnabled(True)
             self._auto_save()
 
     @Slot(str)
@@ -1309,6 +1377,59 @@ class BOSWindow(QMainWindow):
         canvas.draw()
 
     # ── Save ──────────────────────────────────────────────────────────────────
+
+    def _export_video(self) -> None:
+        if not self._results:
+            QMessageBox.information(self, "Nothing to export", "Run the pipeline first.")
+            return
+        if self._vid_thread and self._vid_thread.isRunning():
+            return
+
+        out_dir = Path(self._out_edit.text() or "./bos_output")
+        out_path = str(out_dir / "bos_animation.mp4")
+        fps = self._video_fps.value()
+
+        self._video_btn.setEnabled(False)
+        self._progress.setMaximum(len(self._results))
+        self._progress.setValue(0)
+        self._progress.setTextVisible(True)
+        self._progress.setVisible(True)
+        self._log(f"Exporting video ({len(self._results)} frames @ {fps:.0f} fps)…")
+        self.statusBar().showMessage("Exporting video…")
+
+        self._vid_worker = VideoExportWorker(self._results, out_path, fps)
+        self._vid_thread = QThread(self)
+        self._vid_worker.moveToThread(self._vid_thread)
+        self._vid_thread.started.connect(self._vid_worker.run)
+        self._vid_worker.progress.connect(self._on_vid_progress)
+        self._vid_worker.finished.connect(self._on_vid_finished)
+        self._vid_worker.error.connect(self._on_vid_error)
+        self._vid_worker.finished.connect(self._vid_thread.quit)
+        self._vid_worker.error.connect(self._vid_thread.quit)
+        self._vid_thread.start()
+
+    @Slot(int, int)
+    def _on_vid_progress(self, current: int, total: int) -> None:
+        self._progress.setValue(current)
+        self.statusBar().showMessage(f"Rendering frame {current} / {total}…")
+
+    @Slot(str)
+    def _on_vid_finished(self, path: str) -> None:
+        self._video_btn.setEnabled(True)
+        self._progress.setVisible(False)
+        self._progress.setTextVisible(False)
+        self._progress.setMaximum(0)
+        self._log(f"Video saved → {path}", "ok")
+        self.statusBar().showMessage(f"Video saved: {Path(path).name}")
+
+    @Slot(str)
+    def _on_vid_error(self, tb: str) -> None:
+        self._video_btn.setEnabled(True)
+        self._progress.setVisible(False)
+        self._progress.setTextVisible(False)
+        self._progress.setMaximum(0)
+        self._log(f"Video export error:\n{tb}", "err")
+        self.statusBar().showMessage("Video export failed — see log.")
 
     def _save_results(self) -> None:
         if not self._results:
