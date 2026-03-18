@@ -111,6 +111,53 @@ Standard deviation of a Gaussian blur applied to both the reference and measurem
 
 ---
 
+## H₂ Concentration Measurement
+
+Enable the **H₂ Concentration** group box in the left panel (tick the checkbox) to compute the volumetric hydrogen concentration field from the BOS displacement map.
+
+> **Prerequisite:** The jet must be **axisymmetric** and oriented vertically (axis along Y). The method uses Abel inversion to reconstruct the radial refractive-index profile.
+
+### Physics
+
+1. **Deflection angle** — converts pixel displacement to angular deflection:
+   `ε_x(ρ) = dx(ρ) × (mm_per_px / Z_f)`   \[rad\]
+
+2. **Line-of-sight projection** — cumulative integral of `ε_x` from the far edge inward:
+   `G(ρ) = −∫_ρ^∞ ε_x dρ'`   (Abel transform of Δn)
+
+3. **Abel inversion** — recovers the radial refractive-index change `Δn(r)` from `G(ρ)` using PyAbel.
+
+4. **Concentration** — divides by the refractive-index contrast between pure H₂ and ambient air:
+   `c_H₂(r) = Δn(r) / (n_H₂ − n_air)`   clipped to \[0, 1\]
+
+### Parameters
+
+| Parameter | Default | Description |
+|---|---|---|
+| **mm / px** | `0.1` | Physical size of one pixel at the background screen \[mm/px\]. Measure with a calibration target placed at the background. |
+| **Z_f \[mm\]** | `1000` | Distance from the object (jet) to the background screen \[mm\]. |
+| **n_gas** | `1.000132` | Refractive index of the pure gas. H₂ at STP: `1.000132`. Change for other gases. |
+| **n_ambient** | `1.000293` | Refractive index of the surrounding ambient. Air at STP: `1.000293`. |
+| **Component** | `dx` | Which displacement component carries the radial deflection signal. For a **vertical** jet (axis along Y) use `dx`. For a **horizontal** jet (axis along X) use `dy`. |
+| **Abel method** | `three_point` | PyAbel inversion algorithm. `three_point` is fast and robust; `hansenlaw` can be more accurate for noisy data; `basex` uses basis-set expansion. |
+| **Axis mode** | `auto` | `auto` detects the symmetry axis from the deflection field intensity centroid. `manual` lets you specify the exact column. |
+| **Axis col \[px\]** | — | Only active in `manual` mode. Column index of the jet centreline in the image. |
+
+### Output
+
+When concentration is enabled:
+- An extra **Concentration** tab appears in the result panel showing a colour map (plasma) of `c_H₂ ∈ [0, 1]`.
+- On save: `frame_NNNNN_concentration.npy` (float32) and `frame_NNNNN_concentration.png` are written to the output folder.
+
+### Tips
+
+- **Calibrate carefully.** The result is linearly proportional to `mm_per_px / Z_f`. A 10% error in either parameter gives a 10% error in concentration.
+- **Start with `auto` axis.** Only switch to `manual` if the auto-detected axis is clearly wrong (visible from the dashed white line on the plot).
+- If the map shows negative concentrations or large-amplitude artifacts, check that the correct `component` is selected (dx vs dy) and that the jet is centred in the field of view.
+- The `three_point` Abel method requires at least ~20 pixels of radial extent. Use a larger window size or zoom into the jet region if the jet is narrow.
+
+---
+
 ## Frame Preview
 
 | Control | What it does |

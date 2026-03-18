@@ -52,6 +52,10 @@ from bos_pipeline.processing.displacement import (
     compute_displacement,
     interpolate_to_full_resolution,
 )
+from bos_pipeline.processing.concentration import (
+    ConcentrationConfig,
+    compute_h2_concentration,
+)
 from bos_pipeline import export as _export
 import bos_pipeline.visualization as viz
 
@@ -313,12 +317,44 @@ class PipelineWorker(QObject):
                     f"    max|d|={mag.max():.2f} px   mean|d|={mag.mean():.2f} px",
                     "ok",
                 )
+
+                # Concentration (optional)
+                concentration = None
+                axis_col = None
+                if p.get("conc_enabled"):
+                    try:
+                        conc_cfg = ConcentrationConfig(
+                            enabled=True,
+                            mm_per_px=p["conc_mm_per_px"],
+                            Z_f_mm=p["conc_Z_f_mm"],
+                            n_gas=p["conc_n_gas"],
+                            n_ambient=p["conc_n_ambient"],
+                            component=p["conc_component"],
+                            abel_method=p["conc_abel_method"],
+                            axis_mode=p["conc_axis_mode"],
+                            axis_pos=p.get("conc_axis_pos"),
+                        )
+                        concentration, axis_col = compute_h2_concentration(
+                            dx, dy, conc_cfg
+                        )
+                        self.log_msg.emit(
+                            f"    H₂ conc: max={concentration.max():.4f}  "
+                            f"axis_col={axis_col}",
+                            "ok",
+                        )
+                    except Exception as exc:
+                        self.log_msg.emit(
+                            f"    Concentration failed: {exc}", "warn"
+                        )
+
                 self.result_ready.emit({
                     "frame_idx": meas_idx,
                     "dx": dx,
                     "dy": dy,
                     "ref": ref_p,
                     "meas": meas_p,
+                    "concentration": concentration,
+                    "axis_col": axis_col,
                 })
 
         self.finished.emit()
@@ -423,6 +459,7 @@ class BOSWindow(QMainWindow):
         vl.addWidget(self._make_files_group())
         vl.addWidget(self._make_params_group())
         vl.addWidget(self._make_viewer_group())
+        vl.addWidget(self._make_concentration_group())
         vl.addWidget(self._make_buttons_section())
         vl.addWidget(self._make_log_group(), stretch=1)
         return w
@@ -525,6 +562,82 @@ class BOSWindow(QMainWindow):
         vl.addWidget(nav)
         return grp
 
+    def _make_concentration_group(self) -> QGroupBox:
+        grp = QGroupBox("H₂ Concentration")
+        grp.setCheckable(True)
+        grp.setChecked(False)
+        grp.setToolTip(
+            "Enable Abel-inversion-based H₂ concentration measurement.\n"
+            "Requires axisymmetric jet and calibrated pixel size + Z distance."
+        )
+        self._conc_group = grp
+
+        fl = QFormLayout(grp)
+        fl.setSpacing(7)
+
+        self._conc_mm_per_px = QDoubleSpinBox()
+        self._conc_mm_per_px.setRange(0.001, 100.0)
+        self._conc_mm_per_px.setDecimals(4)
+        self._conc_mm_per_px.setSingleStep(0.01)
+        self._conc_mm_per_px.setValue(0.1)
+        self._conc_mm_per_px.setToolTip("Physical pixel size at the background screen [mm/px]")
+        fl.addRow("mm / px:", self._conc_mm_per_px)
+
+        self._conc_Zf = QDoubleSpinBox()
+        self._conc_Zf.setRange(1.0, 100000.0)
+        self._conc_Zf.setDecimals(1)
+        self._conc_Zf.setSingleStep(10.0)
+        self._conc_Zf.setValue(1000.0)
+        self._conc_Zf.setToolTip("Distance from object to background screen [mm]")
+        fl.addRow("Z_f [mm]:", self._conc_Zf)
+
+        self._conc_n_gas = QDoubleSpinBox()
+        self._conc_n_gas.setRange(1.0, 2.0)
+        self._conc_n_gas.setDecimals(6)
+        self._conc_n_gas.setSingleStep(0.0001)
+        self._conc_n_gas.setValue(1.000132)
+        self._conc_n_gas.setToolTip("Refractive index of pure gas (H₂ at STP: 1.000132)")
+        fl.addRow("n_gas:", self._conc_n_gas)
+
+        self._conc_n_ambient = QDoubleSpinBox()
+        self._conc_n_ambient.setRange(1.0, 2.0)
+        self._conc_n_ambient.setDecimals(6)
+        self._conc_n_ambient.setSingleStep(0.0001)
+        self._conc_n_ambient.setValue(1.000293)
+        self._conc_n_ambient.setToolTip("Refractive index of ambient gas (air at STP: 1.000293)")
+        fl.addRow("n_ambient:", self._conc_n_ambient)
+
+        self._conc_component = QComboBox()
+        self._conc_component.addItems(["dx", "dy"])
+        self._conc_component.setToolTip(
+            "Displacement component that carries the radial signal.\n"
+            "• Vertical jet (axis along Y): use dx (horizontal deflection)\n"
+            "• Horizontal jet (axis along X): use dy"
+        )
+        fl.addRow("Component:", self._conc_component)
+
+        self._conc_abel_method = QComboBox()
+        self._conc_abel_method.addItems(["three_point", "hansenlaw", "basex"])
+        self._conc_abel_method.setToolTip("PyAbel inversion method")
+        fl.addRow("Abel method:", self._conc_abel_method)
+
+        self._conc_axis_mode = QComboBox()
+        self._conc_axis_mode.addItems(["auto", "manual"])
+        self._conc_axis_mode.currentTextChanged.connect(self._on_conc_axis_mode_changed)
+        fl.addRow("Axis mode:", self._conc_axis_mode)
+
+        self._conc_axis_pos = QSpinBox()
+        self._conc_axis_pos.setRange(0, 9999)
+        self._conc_axis_pos.setValue(512)
+        self._conc_axis_pos.setEnabled(False)
+        self._conc_axis_pos.setToolTip("Manual symmetry axis column [px]")
+        fl.addRow("Axis col [px]:", self._conc_axis_pos)
+
+        return grp
+
+    def _on_conc_axis_mode_changed(self, mode: str) -> None:
+        self._conc_axis_pos.setEnabled(mode == "manual")
+
     def _make_buttons_section(self) -> QWidget:
         w = QWidget()
         vl = QVBoxLayout(w)
@@ -582,10 +695,11 @@ class BOSWindow(QMainWindow):
 
         self._canvases: Dict[str, MplCanvas] = {}
         for key, label in [
-            ("frame_view",  "  Frame View  "),
-            ("magnitude",   "  Magnitude   "),
-            ("components",  "  Components  "),
-            ("quiver",      "    Quiver    "),
+            ("frame_view",    "  Frame View    "),
+            ("magnitude",     "  Magnitude     "),
+            ("components",    "  Components    "),
+            ("quiver",        "    Quiver      "),
+            ("concentration", " Concentration  "),
         ]:
             canvas = MplCanvas(dpi=100)
             canvas.show_placeholder(label.strip())
@@ -767,6 +881,8 @@ class BOSWindow(QMainWindow):
                                 f"Could not parse measurement frames:\n{exc}")
             return
 
+        conc_enabled = self._conc_group.isChecked()
+        axis_mode = self._conc_axis_mode.currentText()
         params = {
             "avi_path":    str(self._avi_path),
             "cihx_path":   str(self._cihx_path) if self._cihx_path else None,
@@ -776,6 +892,17 @@ class BOSWindow(QMainWindow):
             "window":      self._window_spin.value(),
             "overlap":     self._overlap_spin.value(),
             "sigma":       self._sigma_spin.value(),
+            # Concentration
+            "conc_enabled":      conc_enabled,
+            "conc_mm_per_px":    self._conc_mm_per_px.value(),
+            "conc_Z_f_mm":       self._conc_Zf.value(),
+            "conc_n_gas":        self._conc_n_gas.value(),
+            "conc_n_ambient":    self._conc_n_ambient.value(),
+            "conc_component":    self._conc_component.currentText(),
+            "conc_abel_method":  self._conc_abel_method.currentText(),
+            "conc_axis_mode":    axis_mode,
+            "conc_axis_pos":     (self._conc_axis_pos.value()
+                                  if axis_mode == "manual" else None),
         }
 
         self._results.clear()
@@ -882,6 +1009,7 @@ class BOSWindow(QMainWindow):
         self._render_magnitude(dx, dy, fidx)
         self._render_components(dx, dy, fidx)
         self._render_quiver(ref, dx, dy, fidx)
+        self._render_concentration(result)
 
     # -- Frame view tab --
 
@@ -1018,6 +1146,56 @@ class BOSWindow(QMainWindow):
         canvas.fig.tight_layout()
         canvas.draw()
 
+    # -- Concentration tab --
+
+    def _render_concentration(self, result: dict) -> None:
+        canvas = self._canvases["concentration"]
+        canvas.fig.clear()
+        ax = canvas.fig.add_subplot(111)
+        concentration = result.get("concentration")
+        fidx = result["frame_idx"]
+
+        if concentration is None:
+            ax.text(0.5, 0.5,
+                    "Concentration not computed.\nEnable 'H₂ Concentration' in the left panel\nand re-run the pipeline.",
+                    transform=ax.transAxes, ha="center", va="center",
+                    fontsize=10, color="#888888")
+            ax.set_axis_off()
+            canvas.draw()
+            return
+
+        axis_col = result.get("axis_col")
+        im = ax.imshow(concentration, origin="upper", cmap="plasma",
+                       vmin=0.0, vmax=1.0, interpolation="bilinear")
+        div = make_axes_locatable(ax)
+        cax = div.append_axes("right", size="4%", pad=0.08)
+        cb  = canvas.fig.colorbar(im, cax=cax)
+        cb.set_label("c(H₂)  [vol. frac.]", fontsize=8)
+        cb.ax.tick_params(labelsize=7)
+
+        if axis_col is not None:
+            ax.axvline(axis_col, color="white", linestyle="--",
+                       linewidth=0.8, label=f"Axis col {axis_col}")
+            ax.legend(fontsize=7, loc="upper right",
+                      facecolor="#00000099", labelcolor="white")
+
+        nonzero = concentration[concentration > 1e-4]
+        if nonzero.size:
+            txt = (f"max   {concentration.max():.4f}\n"
+                   f"mean  {nonzero.mean():.4f}\n"
+                   f"area  {nonzero.size / concentration.size:.3f}")
+            ax.text(0.01, 0.99, txt, transform=ax.transAxes,
+                    va="top", ha="left", fontsize=6.5, color="white",
+                    bbox=dict(boxstyle="round,pad=0.3",
+                              facecolor="black", alpha=0.55))
+
+        ax.set_title(f"H₂ Concentration  —  Frame {fidx}", fontsize=10, pad=5)
+        ax.set_xlabel("x [px]", fontsize=8)
+        ax.set_ylabel("y [px]", fontsize=8)
+        ax.tick_params(labelsize=7)
+        canvas.fig.tight_layout()
+        canvas.draw()
+
     # ── Save ──────────────────────────────────────────────────────────────────
 
     def _save_results(self) -> None:
@@ -1053,6 +1231,20 @@ class BOSWindow(QMainWindow):
                     "_quiver":     viz.plot_quiver(
                         ref, dx, dy, title=f"Field — Frame {fidx}", dpi=200)[0],
                 }
+                if r.get("concentration") is not None:
+                    axis_col = r.get("axis_col")
+                    figs["_concentration"] = viz.plot_concentration(
+                        r["concentration"],
+                        title=f"H₂ Concentration — Frame {fidx}",
+                        axis_col=axis_col,
+                        dpi=200,
+                    )[0]
+                    # Save concentration .npy alongside dx/dy
+                    np.save(
+                        str(out_dir / f"{stem}_concentration.npy"),
+                        r["concentration"],
+                    )
+
                 for suffix, fig in figs.items():
                     fpath = fig_dir / f"{stem}{suffix}.png"
                     fig.savefig(str(fpath), dpi=200, bbox_inches="tight")

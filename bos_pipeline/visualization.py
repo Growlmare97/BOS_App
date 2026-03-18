@@ -322,6 +322,55 @@ def plot_summary(
 
 
 # ---------------------------------------------------------------------------
+# H₂ concentration field
+# ---------------------------------------------------------------------------
+
+def plot_concentration(
+    concentration: np.ndarray,
+    *,
+    title: str = "H₂ Concentration",
+    cmap: str = "plasma",
+    vmin: float = 0.0,
+    vmax: float = 1.0,
+    axis_col: Optional[int] = None,
+    dpi: int = 150,
+    show: bool = False,
+) -> FigAxes:
+    """Plot H₂ volume-fraction concentration map [0–1].
+
+    Parameters
+    ----------
+    concentration:
+        2-D array (H × W) of H₂ volume fraction in [0, 1].
+    axis_col:
+        If provided, draw a vertical dashed line at the symmetry axis.
+    """
+    fig = _fig((7, 5), dpi)
+    ax = fig.add_subplot(111)
+    im = ax.imshow(concentration, origin="upper", cmap=cmap,
+                   vmin=vmin, vmax=vmax, interpolation="bilinear")
+    _add_colorbar(fig, ax, im, label="c(H₂)  [vol. frac.]")
+    if axis_col is not None:
+        ax.axvline(axis_col, color="white", linestyle="--", linewidth=0.8,
+                   label=f"Axis (col {axis_col})")
+        ax.legend(fontsize=7, loc="upper right")
+    _style_ax(ax, title)
+
+    # Stats box
+    nonzero = concentration[concentration > 1e-4]
+    if nonzero.size:
+        txt = (f"max  {concentration.max():.4f}\n"
+               f"mean {nonzero.mean():.4f}\n"
+               f"area frac {nonzero.size / concentration.size:.3f}")
+        ax.text(0.01, 0.99, txt, transform=ax.transAxes,
+                va="top", ha="left", fontsize=6.5, color="white",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="black", alpha=0.55))
+
+    fig.tight_layout()
+    return fig, np.array([ax])
+
+
+# ---------------------------------------------------------------------------
 # Save utility
 # ---------------------------------------------------------------------------
 
