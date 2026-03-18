@@ -65,6 +65,10 @@ _STYLE = """
     font-family: "Segoe UI", Arial, sans-serif;
     font-size: 9pt;
 }
+QLabel {
+    color: #202020;
+    background: transparent;
+}
 QMainWindow, QWidget#central {
     background-color: #f3f3f3;
 }
