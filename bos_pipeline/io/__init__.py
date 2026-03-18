@@ -3,6 +3,7 @@
 from bos_pipeline.io.base import CameraReader, FrameMetadata  # noqa: F401
 from bos_pipeline.io.photron import PhotronReader  # noqa: F401
 from bos_pipeline.io.dalsa import DalsaReader  # noqa: F401
+from bos_pipeline.io.avi import PhotronAviReader  # noqa: F401
 
 
 def get_reader(camera_type: str, **kwargs) -> CameraReader:
@@ -11,12 +12,13 @@ def get_reader(camera_type: str, **kwargs) -> CameraReader:
     Parameters
     ----------
     camera_type:
-        One of ``"photron"``, ``"dalsa"``, ``"tiff_sequence"``.
+        One of ``"photron"``, ``"photron_avi"``, ``"dalsa"``, ``"tiff_sequence"``.
     **kwargs:
         Forwarded to the reader constructor.
     """
     registry = {
         "photron": PhotronReader,
+        "photron_avi": PhotronAviReader,
         "dalsa": DalsaReader,
         "tiff_sequence": DalsaReader,
     }

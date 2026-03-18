@@ -59,7 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     input_grp.add_argument(
         "--camera",
-        choices=["photron", "dalsa", "tiff_sequence"],
+        choices=["photron", "photron_avi", "dalsa", "tiff_sequence"],
         default="photron",
         help="Camera type / input format (default: photron).",
     )
@@ -221,6 +221,7 @@ def _run_file(config: Dict[str, Any]) -> int:
     from bos_pipeline.processing.preprocess import PreprocessConfig, preprocess
     from bos_pipeline.processing.displacement import (
         DisplacementConfig, compute_displacement, displacement_magnitude,
+        interpolate_to_full_resolution,
     )
     from bos_pipeline.processing.abel import AbelConfig, abel_invert
     from bos_pipeline import visualization as viz
@@ -235,7 +236,7 @@ def _run_file(config: Dict[str, Any]) -> int:
         return 1
 
     reader_kwargs: Dict[str, Any] = {"path": input_path}
-    if camera_type == "photron":
+    if camera_type in ("photron", "photron_avi"):
         if meta := cam_cfg.get("metadata_file"):
             reader_kwargs["metadata_file"] = meta
     elif camera_type in ("dalsa", "tiff_sequence"):
@@ -293,7 +294,15 @@ def _run_file(config: Dict[str, Any]) -> int:
 
             ref_proc, meas_proc = preprocess(reference_raw, meas_raw, config=pre_cfg)
 
-            dx, dy = compute_displacement(ref_proc, meas_proc, config=disp_cfg)
+            result = compute_displacement(ref_proc, meas_proc, config=disp_cfg)
+            dx, dy = result.dx, result.dy
+
+            # Up-sample cross-correlation grid to full image resolution
+            if disp_cfg.method == "cross_correlation" and result.grid_x is not None:
+                dx, dy = interpolate_to_full_resolution(
+                    dx, dy, ref_proc.shape, result=result
+                )
+                logger.info("Up-sampled displacement to full resolution %s.", ref_proc.shape)
 
             all_dx.append(dx)
             all_dy.append(dy)
@@ -304,13 +313,17 @@ def _run_file(config: Dict[str, Any]) -> int:
 
             if save_figs and not config.get("no_figures", False):
                 cmap_mag = config.get("visualization", {}).get("colormap_magnitude", "viridis")
-                cmap_sig = config.get("visualization", {}).get("colormap_signed", "seismic")
-                ds = config.get("visualization", {}).get("quiver_downsample", 8)
+                ds = config.get("visualization", {}).get("quiver_downsample", 16)
 
                 fig_mag, _ = viz.plot_displacement_magnitude(
                     dx, dy, cmap=cmap_mag, dpi=dpi, show=show
                 )
                 viz.save_figure(fig_mag, output_dir / "figures", f"{stem}_magnitude", fig_formats, dpi)
+
+                fig_comp, _ = viz.plot_displacement_components(
+                    dx, dy, dpi=dpi, show=show
+                )
+                viz.save_figure(fig_comp, output_dir / "figures", f"{stem}_components", fig_formats, dpi)
 
                 fig_q, _ = viz.plot_quiver(
                     ref_proc, dx, dy, downsample=ds, dpi=dpi, show=show

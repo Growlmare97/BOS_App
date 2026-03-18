@@ -36,6 +36,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+gui = [
+    "PySide6>=6.6",          # Desktop GUI application
+]
 photron = [
     "pyMRAW>=0.30",          # Photron .mraw reader
 ]
@@ -48,8 +51,10 @@ dev = [
     "pytest-cov>=4.1",
     "jupyter>=1.0",
     "ipykernel>=6.25",
+    "PySide6>=6.6",
 ]
 all = [
+    "PySide6>=6.6",
     "pyMRAW>=0.30",
     "harvesters>=1.4",
     "genicam>=1.1",
@@ -61,6 +66,7 @@ all = [
 
 [project.scripts]
 bos_process = "bos_pipeline.cli:main"
+bos_app     = "bos_pipeline.app:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
