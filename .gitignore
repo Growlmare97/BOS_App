@@ -1,0 +1,26 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# IDE
+.vscode/
+.idea/
+
+# Data & output
+data/
+output/
+
+# Node
+node_modules/
+
+# Claude
+.claude/
+
+# OS
+Thumbs.db
+.DS_Store

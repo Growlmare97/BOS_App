@@ -1,0 +1,210 @@
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 16px;
+  height: 40px;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+/* ── Stage Pipeline ─────────────────────────────── */
+.pipeline {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.stageItem {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+}
+
+.stageBtn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+  cursor: default;
+  transition: color var(--transition-fast);
+}
+
+.stageDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+  transition: background var(--transition-base), box-shadow var(--transition-base);
+}
+
+.stageDone .stageDot {
+  background: var(--accent-green);
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+}
+
+.stageDone .stageBtn {
+  color: var(--accent-green);
+}
+
+.stageCurrent .stageDot {
+  background: var(--accent-blue);
+  animation: pulse-dot 0.9s ease infinite;
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.7);
+}
+
+.stageCurrent .stageBtn {
+  color: var(--accent-blue);
+}
+
+.stageError .stageDot {
+  background: var(--accent-red);
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+}
+
+.stageError .stageBtn {
+  color: var(--accent-red);
+}
+
+.stageSep {
+  width: 18px;
+  height: 1px;
+  background: var(--border);
+  flex-shrink: 0;
+  margin: 0 2px;
+}
+
+.stageSepDone {
+  background: var(--accent-green);
+  opacity: 0.5;
+}
+
+/* ── Right Side ─────────────────────────────────── */
+.rightSection {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+}
+
+.sep {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+/* ── Progress ───────────────────────────────────── */
+.progressSection {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.progressBar {
+  width: 80px;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: var(--accent-blue);
+  border-radius: 2px;
+  transition: width 200ms ease;
+}
+
+.progressFillDone {
+  background: var(--accent-green);
+}
+
+.progressFillError {
+  background: var(--accent-red);
+}
+
+.progressPct {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  width: 36px;
+  text-align: right;
+}
+
+/* ── Stats ──────────────────────────────────────── */
+.statItem {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.statLabel {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.statValue {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.statValueGreen {
+  color: var(--accent-green);
+}
+
+/* ── Message ────────────────────────────────────── */
+.messageArea {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  margin-left: 4px;
+}
+
+.messageActive {
+  color: var(--text-secondary);
+}
+
+.messageError {
+  color: var(--accent-red);
+}
+
+/* ── Connection Dot ─────────────────────────────── */
+.connDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.connDotOnline {
+  background: var(--accent-green);
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+}
+
+.connDotOffline {
+  background: var(--text-muted);
+}

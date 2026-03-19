@@ -4,7 +4,6 @@ Background-Oriented Schlieren (BOS) image processing pipeline for optical
 analysis of gas flows (hydrogen jets, combustion processes) in industrial
 safety research.
 
-Developed at **CoStudy GmbH**.
 
 ---
 

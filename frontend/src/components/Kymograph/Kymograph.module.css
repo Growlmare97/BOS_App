@@ -1,0 +1,150 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-deep);
+  overflow: hidden;
+}
+
+/* ── Frame Preview ──────────────────────────────── */
+.previewPane {
+  flex: 0 0 40%;
+  position: relative;
+  background: var(--bg-input);
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+  min-height: 0;
+}
+
+.previewCanvas {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.svgOverlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.lineOverlayGroup {
+  pointer-events: all;
+  cursor: ns-resize;
+}
+
+.lineOverlayGroupV {
+  cursor: ew-resize;
+}
+
+.dragLine {
+  stroke: #f59e0b;
+  stroke-width: 2;
+  stroke-dasharray: 6 3;
+  fill: none;
+}
+
+.dragLineHover {
+  stroke: #fbbf24;
+  stroke-width: 3;
+}
+
+.lineLabel {
+  fill: #f59e0b;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 500;
+  user-select: none;
+}
+
+.previewPlaceholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--text-muted);
+}
+
+.previewPlaceholderIcon {
+  width: 32px;
+  height: 32px;
+  opacity: 0.3;
+}
+
+.previewPlaceholderText {
+  font-size: 0.8125rem;
+}
+
+/* ── Kymograph Plot ──────────────────────────────── */
+.kymoPane {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.kymoPanelInner {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── Velocity Readout ───────────────────────────── */
+.velocityReadout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--bg-elevated);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.velocityLabel {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.velocityValue {
+  font-family: var(--font-mono);
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--accent-green);
+  text-shadow: var(--glow-green);
+  letter-spacing: 0.02em;
+}
+
+.velocityUnit {
+  font-family: var(--font-mono);
+  font-size: 0.9375rem;
+  color: var(--text-secondary);
+}
+
+.velocityNA {
+  font-family: var(--font-mono);
+  font-size: 1.25rem;
+  color: var(--text-muted);
+}
+
+/* ── Loading ────────────────────────────────────── */
+.loadingOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 15, 30, 0.7);
+  z-index: 10;
+}
+
+.loadingSpinner {
+  width: 28px;
+  height: 28px;
+  color: var(--accent-blue);
+  animation: spin 1s linear infinite;
+}

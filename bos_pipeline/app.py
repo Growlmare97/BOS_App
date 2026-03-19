@@ -10,7 +10,9 @@ Features
 * Live frame preview — slider scrubs through the video in real time
 * Configurable processing parameters (method, window, overlap, sigma)
 * Background pipeline thread — UI stays responsive during computation
-* Four result tabs: Frame View · Magnitude · Components · Quiver
+* Six result tabs: Frame View · Magnitude · Components · Quiver ·
+  Concentration · Velocity
+* Velocity estimation from consecutive displacement fields
 * Stats bar: max/mean displacement, background noise, SNR
 * Result navigator — switch between computed measurement frames
 * Auto-save all figures and .npy displacement fields on completion
@@ -31,10 +33,11 @@ matplotlib.use("QtAgg")
 from PySide6.QtCore import Qt, QObject, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QFont, QColor, QPalette
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
-    QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
-    QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSlider,
-    QSpinBox, QStatusBar, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
+    QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog,
+    QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+    QMainWindow, QMessageBox, QProgressBar, QPushButton, QScrollArea,
+    QSizePolicy, QSlider, QSpinBox, QStatusBar, QTabWidget, QTextEdit,
+    QVBoxLayout, QWidget,
 )
 
 # ── Matplotlib / NumPy ───────────────────────────────────────────────────────
@@ -57,6 +60,10 @@ from bos_pipeline.processing.concentration import (
     compute_concentration,
     compute_n_pair,
     GAS_DB, JET_GASES, AMBIENT_GASES,
+)
+from bos_pipeline.processing.velocity import (
+    VelocityConfig,
+    compute_velocity_frame_to_frame,
 )
 from bos_pipeline import export as _export
 import bos_pipeline.visualization as viz
@@ -224,6 +231,23 @@ QStatusBar {
     font-size: 8.5pt;
     padding: 2px 8px;
 }
+/* ── Scroll area ── */
+QScrollArea { border: none; background: transparent; }
+QScrollArea > QWidget > QWidget { background: transparent; }
+QScrollBar:vertical {
+    background: #eeeeee; width: 8px; border-radius: 4px;
+}
+QScrollBar::handle:vertical {
+    background: #c0c0c0; border-radius: 4px; min-height: 30px;
+}
+QScrollBar::handle:vertical:hover { background: #a0a0a0; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+/* ── Checkable group box ── */
+QGroupBox::indicator {
+    width: 14px; height: 14px;
+}
+QGroupBox::indicator:checked { image: none; background: #0067c0; border: 1px solid #0067c0; border-radius: 3px; }
+QGroupBox::indicator:unchecked { image: none; background: #fafafa; border: 1px solid #c0c0c0; border-radius: 3px; }
 """
 
 
@@ -274,6 +298,18 @@ class PipelineWorker(QObject):
             overlap=p["overlap"],
         )
 
+        vel_enabled = p.get("vel_enabled", False)
+        vel_cfg: Optional[VelocityConfig] = None
+        if vel_enabled:
+            vel_cfg = VelocityConfig(
+                method="frame_to_frame",
+                window_size=p.get("vel_window", 32),
+                overlap=p.get("vel_overlap", 0.5),
+                dt=p.get("vel_dt", 1e-3),
+                pixel_scale_mm=p.get("vel_mm_per_px", 0.1),
+                nmt_threshold=p.get("vel_nmt_threshold", 2.0),
+            )
+
         self.log_msg.emit("Opening AVI…", "info")
         kwargs: dict = {"path": p["avi_path"]}
         if p.get("cihx_path"):
@@ -289,11 +325,16 @@ class PipelineWorker(QObject):
                 "info",
             )
 
+            # Auto-set dt from camera fps if user left it at default
+            if vel_cfg and fps > 0:
+                vel_cfg.dt = 1.0 / fps
+
             self.status_msg.emit(f"Building reference (frame {p['ref_idx']})…")
             ref_raw = reader.get_frame(p["ref_idx"]).astype(np.float32)
 
             meas_indices: List[int] = p["meas_indices"]
             n = len(meas_indices)
+            prev_meas_raw: Optional[np.ndarray] = None
 
             for i, meas_idx in enumerate(meas_indices):
                 if self._cancelled:
@@ -355,6 +396,33 @@ class PipelineWorker(QObject):
                             f"    Concentration failed: {exc}", "warn"
                         )
 
+                # Velocity (optional — needs two consecutive raw frames)
+                velocity = None
+                if vel_enabled and vel_cfg and prev_meas_raw is not None:
+                    try:
+                        vel_result = compute_velocity_frame_to_frame(
+                            prev_meas_raw, meas_raw, config=vel_cfg,
+                        )
+                        velocity = {
+                            "u": vel_result.u,
+                            "v": vel_result.v,
+                            "magnitude": vel_result.magnitude,
+                            "vorticity": vel_result.vorticity,
+                            "divergence": vel_result.divergence,
+                        }
+                        vmax = float(vel_result.magnitude.max())
+                        vmean = float(vel_result.magnitude.mean())
+                        self.log_msg.emit(
+                            f"    Vel: max={vmax:.3f} m/s  mean={vmean:.3f} m/s",
+                            "ok",
+                        )
+                    except Exception as exc:
+                        self.log_msg.emit(
+                            f"    Velocity failed: {exc}", "warn"
+                        )
+
+                prev_meas_raw = meas_raw
+
                 self.result_ready.emit({
                     "frame_idx": meas_idx,
                     "dx": dx,
@@ -363,6 +431,7 @@ class PipelineWorker(QObject):
                     "meas": meas_p,
                     "concentration": concentration,
                     "axis_col": axis_col,
+                    "velocity": velocity,
                 })
 
         self.finished.emit()
@@ -492,20 +561,36 @@ class BOSWindow(QMainWindow):
         self.setStatusBar(sb)
         sb.showMessage("Ready — load an AVI file to begin.")
 
-    # ── Left panel ────────────────────────────────────────────────────────────
+    # ── Left panel (scrollable) ─────────────────────────────────────────────
 
     def _make_left_panel(self) -> QWidget:
-        w = QWidget()
-        vl = QVBoxLayout(w)
-        vl.setContentsMargins(0, 0, 0, 0)
-        vl.setSpacing(8)
+        outer = QWidget()
+        outer_vl = QVBoxLayout(outer)
+        outer_vl.setContentsMargins(0, 0, 0, 0)
+        outer_vl.setSpacing(0)
+
+        # Scrollable area for all settings
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QFrame.NoFrame)
+
+        inner = QWidget()
+        vl = QVBoxLayout(inner)
+        vl.setContentsMargins(0, 0, 2, 0)
+        vl.setSpacing(6)
         vl.addWidget(self._make_files_group())
         vl.addWidget(self._make_params_group())
         vl.addWidget(self._make_viewer_group())
+        vl.addWidget(self._make_velocity_group())
         vl.addWidget(self._make_concentration_group())
-        vl.addWidget(self._make_buttons_section())
-        vl.addWidget(self._make_log_group(), stretch=1)
-        return w
+        vl.addStretch()
+
+        scroll.setWidget(inner)
+        outer_vl.addWidget(scroll, stretch=1)
+        outer_vl.addWidget(self._make_buttons_section())
+        outer_vl.addWidget(self._make_log_group())
+        return outer
 
     def _make_files_group(self) -> QGroupBox:
         grp = QGroupBox("Files")
@@ -534,26 +619,37 @@ class BOSWindow(QMainWindow):
         return row
 
     def _make_params_group(self) -> QGroupBox:
-        grp = QGroupBox("Processing Parameters")
+        grp = QGroupBox("Displacement")
         fl = QFormLayout(grp)
-        fl.setSpacing(7)
+        fl.setSpacing(6)
 
         self._method_combo = QComboBox()
         self._method_combo.addItems(["cross_correlation", "farneback", "lucas_kanade"])
+        self._method_combo.setToolTip(
+            "cross_correlation — windowed FFT (PIV-style, robust)\n"
+            "farneback — dense optical flow (Gunnar Farneback)\n"
+            "lucas_kanade — sparse optical flow (Lucas-Kanade pyramid)"
+        )
         fl.addRow("Method:", self._method_combo)
 
         self._ref_spin = QSpinBox()
         self._ref_spin.setRange(0, 9999)
+        self._ref_spin.setToolTip("Index of the reference frame (no-flow background)")
         fl.addRow("Ref frame:", self._ref_spin)
 
         self._meas_edit = QLineEdit("5,6,7,8,9,10")
-        self._meas_edit.setPlaceholderText("e.g. 5,6,7 or 5:20")
+        self._meas_edit.setPlaceholderText("e.g. 5,6,7  or  5:20  or  all")
+        self._meas_edit.setToolTip(
+            "Frames to process.\n"
+            "Formats:  5,6,7  |  5:25  (range)  |  all"
+        )
         fl.addRow("Meas frames:", self._meas_edit)
 
         self._window_spin = QSpinBox()
         self._window_spin.setRange(8, 512)
         self._window_spin.setSingleStep(8)
         self._window_spin.setValue(32)
+        self._window_spin.setToolTip("Interrogation window size [px] (power of 2 recommended)")
         fl.addRow("Window [px]:", self._window_spin)
 
         self._overlap_spin = QDoubleSpinBox()
@@ -561,6 +657,7 @@ class BOSWindow(QMainWindow):
         self._overlap_spin.setSingleStep(0.05)
         self._overlap_spin.setValue(0.75)
         self._overlap_spin.setDecimals(2)
+        self._overlap_spin.setToolTip("Overlap fraction between adjacent windows (0.5 – 0.75 typical)")
         fl.addRow("Overlap:", self._overlap_spin)
 
         self._sigma_spin = QDoubleSpinBox()
@@ -568,6 +665,7 @@ class BOSWindow(QMainWindow):
         self._sigma_spin.setSingleStep(0.5)
         self._sigma_spin.setValue(1.0)
         self._sigma_spin.setDecimals(1)
+        self._sigma_spin.setToolTip("Gaussian pre-filter σ [px] — smooths noise before correlation (0 = off)")
         fl.addRow("Pre-filter σ:", self._sigma_spin)
 
         return grp
@@ -603,6 +701,82 @@ class BOSWindow(QMainWindow):
         nl.addWidget(btn_show, stretch=1)
         nl.addWidget(btn_next)
         vl.addWidget(nav)
+        return grp
+
+    def _make_velocity_group(self) -> QGroupBox:
+        grp = QGroupBox("Velocity")
+        grp.setCheckable(True)
+        grp.setChecked(False)
+        grp.setToolTip(
+            "Estimate 2-D velocity field from consecutive BOS frames.\n"
+            "Uses FFT cross-correlation between frame pairs.\n"
+            "Requires at least two measurement frames.\n"
+            "Output: u, v [m/s], vorticity [1/s], divergence [1/s]."
+        )
+        self._vel_group = grp
+
+        fl = QFormLayout(grp)
+        fl.setSpacing(6)
+
+        self._vel_mm_per_px = QDoubleSpinBox()
+        self._vel_mm_per_px.setRange(0.001, 100.0)
+        self._vel_mm_per_px.setDecimals(4)
+        self._vel_mm_per_px.setSingleStep(0.01)
+        self._vel_mm_per_px.setValue(0.1)
+        self._vel_mm_per_px.setToolTip(
+            "Physical pixel size at the measurement plane [mm/px].\n"
+            "Used to convert pixel displacements to m/s."
+        )
+        fl.addRow("mm / px:", self._vel_mm_per_px)
+
+        self._vel_dt_spin = QDoubleSpinBox()
+        self._vel_dt_spin.setRange(1e-6, 10.0)
+        self._vel_dt_spin.setDecimals(6)
+        self._vel_dt_spin.setSingleStep(0.0001)
+        self._vel_dt_spin.setValue(0.001)
+        self._vel_dt_spin.setToolTip(
+            "Time step between consecutive frames [s].\n"
+            "Auto-filled from camera frame rate when video is loaded.\n"
+            "For 1000 fps → dt = 0.001 s"
+        )
+        fl.addRow("dt [s]:", self._vel_dt_spin)
+
+        self._vel_auto_dt = QCheckBox("Auto from fps")
+        self._vel_auto_dt.setChecked(True)
+        self._vel_auto_dt.setToolTip("Automatically compute dt = 1 / fps from the camera metadata")
+        self._vel_auto_dt.toggled.connect(
+            lambda on: self._vel_dt_spin.setEnabled(not on)
+        )
+        self._vel_dt_spin.setEnabled(False)
+        fl.addRow("", self._vel_auto_dt)
+
+        self._vel_window_spin = QSpinBox()
+        self._vel_window_spin.setRange(8, 512)
+        self._vel_window_spin.setSingleStep(8)
+        self._vel_window_spin.setValue(32)
+        self._vel_window_spin.setToolTip("Velocity interrogation window [px]")
+        fl.addRow("Window [px]:", self._vel_window_spin)
+
+        self._vel_overlap_spin = QDoubleSpinBox()
+        self._vel_overlap_spin.setRange(0.0, 0.9)
+        self._vel_overlap_spin.setSingleStep(0.05)
+        self._vel_overlap_spin.setValue(0.5)
+        self._vel_overlap_spin.setDecimals(2)
+        self._vel_overlap_spin.setToolTip("Window overlap fraction for velocity cross-correlation")
+        fl.addRow("Overlap:", self._vel_overlap_spin)
+
+        self._vel_nmt_spin = QDoubleSpinBox()
+        self._vel_nmt_spin.setRange(0.5, 10.0)
+        self._vel_nmt_spin.setSingleStep(0.5)
+        self._vel_nmt_spin.setValue(2.0)
+        self._vel_nmt_spin.setDecimals(1)
+        self._vel_nmt_spin.setToolTip(
+            "Normalised Median Test threshold for outlier rejection.\n"
+            "Westerweel & Scarano (2005) recommend 2.0 – 3.0.\n"
+            "Lower = more aggressive filtering."
+        )
+        fl.addRow("NMT thresh:", self._vel_nmt_spin)
+
         return grp
 
     def _make_concentration_group(self) -> QGroupBox:
@@ -850,7 +1024,7 @@ class BOSWindow(QMainWindow):
         self._log_box = QTextEdit()
         self._log_box.setObjectName("log_box")
         self._log_box.setReadOnly(True)
-        self._log_box.setMinimumHeight(80)
+        self._log_box.setFixedHeight(120)
         vl.addWidget(self._log_box)
         return grp
 
@@ -873,6 +1047,7 @@ class BOSWindow(QMainWindow):
             ("magnitude",     "  Magnitude     "),
             ("components",    "  Components    "),
             ("quiver",        "    Quiver      "),
+            ("velocity",      "   Velocity     "),
             ("concentration", " Concentration  "),
         ]:
             canvas = MplCanvas(dpi=100)
@@ -984,6 +1159,10 @@ class BOSWindow(QMainWindow):
             self._frame_label.setText(f"Frame 0 / {self._n_frames - 1}")
             self._ref_spin.setMaximum(self._n_frames - 1)
 
+            # Auto-fill velocity dt from fps
+            if fps > 0 and self._vel_auto_dt.isChecked():
+                self._vel_dt_spin.setValue(1.0 / fps)
+
             msg = (f"Loaded: {self._avi_path.name}  "
                    f"|  {w}×{h} px  |  {self._n_frames} frames  |  {fps:.0f} fps")
             self._log(msg)
@@ -1056,6 +1235,7 @@ class BOSWindow(QMainWindow):
             return
 
         conc_enabled = self._conc_group.isChecked()
+        vel_enabled  = self._vel_group.isChecked()
         axis_mode = self._conc_axis_mode.currentText()
         params = {
             "avi_path":    str(self._avi_path),
@@ -1066,6 +1246,13 @@ class BOSWindow(QMainWindow):
             "window":      self._window_spin.value(),
             "overlap":     self._overlap_spin.value(),
             "sigma":       self._sigma_spin.value(),
+            # Velocity
+            "vel_enabled":        vel_enabled,
+            "vel_mm_per_px":      self._vel_mm_per_px.value(),
+            "vel_dt":             self._vel_dt_spin.value(),
+            "vel_window":         self._vel_window_spin.value(),
+            "vel_overlap":        self._vel_overlap_spin.value(),
+            "vel_nmt_threshold":  self._vel_nmt_spin.value(),
             # Concentration
             "conc_enabled":        conc_enabled,
             "conc_gas_type":       self._conc_gas_type.currentData(),
@@ -1189,6 +1376,7 @@ class BOSWindow(QMainWindow):
         self._render_magnitude(dx, dy, fidx)
         self._render_components(dx, dy, fidx)
         self._render_quiver(ref, dx, dy, fidx)
+        self._render_velocity(result)
         self._render_concentration(result)
 
     # -- Frame view tab --
@@ -1323,6 +1511,78 @@ class BOSWindow(QMainWindow):
         ax.set_xlabel("x [px]", fontsize=8)
         ax.set_ylabel("y [px]", fontsize=8)
         ax.tick_params(labelsize=7)
+        canvas.fig.tight_layout()
+        canvas.draw()
+
+    # -- Velocity tab --
+
+    def _render_velocity(self, result: dict) -> None:
+        canvas = self._canvases["velocity"]
+        canvas.fig.clear()
+        velocity = result.get("velocity")
+        fidx = result["frame_idx"]
+
+        if velocity is None:
+            ax = canvas.fig.add_subplot(111)
+            ax.text(
+                0.5, 0.5,
+                "Velocity not computed.\n"
+                "Enable 'Velocity' in the left panel and process\n"
+                "at least two consecutive measurement frames.",
+                transform=ax.transAxes, ha="center", va="center",
+                fontsize=10, color="#888888",
+            )
+            ax.set_axis_off()
+            canvas.draw()
+            return
+
+        u = velocity["u"]
+        v = velocity["v"]
+        vel_mag = velocity["magnitude"]
+        vort = velocity["vorticity"]
+
+        axes = canvas.fig.subplots(1, 2)
+
+        # Left: velocity magnitude
+        ax = axes[0]
+        vmax_v = float(np.percentile(vel_mag, 99)) or 1.0
+        im = ax.imshow(vel_mag, origin="upper", cmap="turbo",
+                       vmin=0, vmax=vmax_v, interpolation="bilinear")
+        div = make_axes_locatable(ax)
+        cax = div.append_axes("right", size="4%", pad=0.08)
+        cb = canvas.fig.colorbar(im, cax=cax)
+        cb.set_label("|V| [m/s]", fontsize=8)
+        cb.ax.tick_params(labelsize=7)
+        ax.set_title("Velocity Magnitude", fontsize=9, pad=4)
+        ax.set_xlabel("x [px]", fontsize=7)
+        ax.set_ylabel("y [px]", fontsize=7)
+        ax.tick_params(labelsize=6)
+
+        txt = (f"max  {vel_mag.max():.3f} m/s\n"
+               f"mean {vel_mag.mean():.3f} m/s")
+        ax.text(0.01, 0.99, txt, transform=ax.transAxes,
+                va="top", ha="left", fontsize=6.5, color="white",
+                bbox=dict(boxstyle="round,pad=0.3",
+                          facecolor="black", alpha=0.55))
+
+        # Right: vorticity
+        ax = axes[1]
+        vlim = float(np.percentile(np.abs(vort), 99)) or 1.0
+        im = ax.imshow(vort, origin="upper", cmap="RdBu_r",
+                       vmin=-vlim, vmax=vlim, interpolation="bilinear")
+        div = make_axes_locatable(ax)
+        cax = div.append_axes("right", size="4%", pad=0.08)
+        cb = canvas.fig.colorbar(im, cax=cax)
+        cb.set_label("ω_z [1/s]", fontsize=8)
+        cb.ax.tick_params(labelsize=7)
+        ax.set_title("Vorticity", fontsize=9, pad=4)
+        ax.set_xlabel("x [px]", fontsize=7)
+        ax.set_ylabel("y [px]", fontsize=7)
+        ax.tick_params(labelsize=6)
+
+        canvas.fig.suptitle(
+            f"Velocity Field  —  Frame {fidx}", fontsize=10, y=1.01
+        )
         canvas.fig.tight_layout()
         canvas.draw()
 
@@ -1464,6 +1724,13 @@ class BOSWindow(QMainWindow):
                     "_quiver":     viz.plot_quiver(
                         ref, dx, dy, title=f"Field — Frame {fidx}", dpi=200)[0],
                 }
+                if r.get("velocity") is not None:
+                    vel = r["velocity"]
+                    np.save(str(out_dir / f"{stem}_vel_u.npy"), vel["u"])
+                    np.save(str(out_dir / f"{stem}_vel_v.npy"), vel["v"])
+                    np.save(str(out_dir / f"{stem}_vel_mag.npy"), vel["magnitude"])
+                    np.save(str(out_dir / f"{stem}_vorticity.npy"), vel["vorticity"])
+
                 if r.get("concentration") is not None:
                     axis_col = r.get("axis_col")
                     figs["_concentration"] = viz.plot_concentration(
